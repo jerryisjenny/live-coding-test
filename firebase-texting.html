@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>iMessage风格聊天室</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.js"></script>
+    
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
+    
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f0f0f0;
+        }
+        #auth-container {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            padding: 20px;
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            width: 80%;
+            max-width: 400px;
+        }
+        #username-input {
+            width: 100%;
+            padding: 12px;
+            border-radius: 20px;
+            border: 1px solid #ccc;
+            font-size: 16px;
+            margin-bottom: 10px;
+            box-sizing: border-box;
+        }
+        #room-input {
+            width: 100%;
+            padding: 12px;
+            border-radius: 20px;
+            border: 1px solid #ccc;
+            font-size: 16px;
+            margin-bottom: 15px;
+            box-sizing: border-box;
+        }
+        #login-button {
+            background-color: #007AFF;
+            color: white;
+            border: none;
+            border-radius: 20px;
+            padding: 12px 20px;
+            cursor: pointer;
+            font-size: 16px;
+            width: 100%;
+        }
+        #input-container {
+            position: fixed;
+            bottom: 10px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 80%;
+            max-width: 500px;
+            display: flex;
+        }
+        #message-input {
+            flex-grow: 1;
+            padding: 12px;
+            border-radius: 20px;
+            border: 1px solid #ccc;
+            font-size: 16px;
+            margin-right: 10px;
+        }
+        #send-button {
+            background-color: #007AFF;
+            color: white;
+            border: none;
+            border-radius: 20px;
+            padding: 10px 20px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        #online-users {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background-color: rgba(255,255,255,0.7);
+            padding: 10px;
+            border-radius: 10px;
+            font-size: 14px;
+            max-width: 200px;
+        }
+        #room-info {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            background-color: rgba(255,255,255,0.7);
+            padding: 10px;
+            border-radius: 10px;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <!-- 登录区域 -->
+    <div id="auth-container">
+        <h2>iMessage风格聊天室</h2>
+        <p>请输入你的用户名和房间号</p>
+        <input type="text" id="username-input" placeholder="你的名字" autocomplete="off">
+        <input type="text" id="room-input" placeholder="房间号 (默认: main)" value="main" autocomplete="off">
+        <button id="login-button">进入聊天</button>
+    </div>
+    
+    <!-- 在线用户列表 -->
+    <div id="online-users" style="display: none;"></div>
+    
+    <!-- 房间信息 -->
+    <div id="room-info" style="display: none;"></div>
+    
+    <!-- 消息输入区域 -->
+    <div id="input-container" style="display: none;">
+        <input type="text" id="message-input" placeholder="输入消息..." autocomplete="off">
+        <button id="send-button">发送</button>
+    </div>
+    
+    <script>
+        // Firebase配置 - 替换为你自己的配置
+        const firebaseConfig = {
+            apiKey: "AIzaSyDg5vsYwXm8EhVU-S3g6OOMoUxdTVQB7pE",
+            authDomain: "livecoding-fcda9.firebaseapp.com",
+            databaseURL: "https://livecoding-fcda9-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "livecoding-fcda9",
+            storageBucket: "livecoding-fcda9.firebasestorage.app",
+            messagingSenderId: "379395951914",
+            appId: "1:379395951914:web:2c8dbf21822e77c19d6253"
+        };
+        
+        // 初始化Firebase
+        firebase.initializeApp(firebaseConfig);
+        
+        // 获取数据库引用
+        const database = firebase.database();
+        
+        // 用户和房间信息
+        let currentUser = null;
+        let roomId = "main";
+        let messagesRef;
+        let onlineUsersRef;
+        let typingStatusRef;
+        
+        // 全局变量
+        let messages = [];
+        let bubbleWidth;
+        let bubbleHeight;
+        let typing = false;
+        let typingText = "";
+        let onlineUsers = {};
+        
+        // 登录按钮事件
+        document.getElementById('login-button').addEventListener('click', function() {
+            const username = document.getElementById('username-input').value.trim();
+            const roomInput = document.getElementById('room-input').value.trim();
+            
+            if (username) {
+                // 设置用户名和房间
+                roomId = roomInput || "main";
+                
+                currentUser = {
+                    id: generateUserId(username),
+                    name: username
+                };
+                
+                // 获取相应的数据库引用
+                messagesRef = database.ref('rooms/' + roomId + '/messages');
+                onlineUsersRef = database.ref('rooms/' + roomId + '/online');
+                typingStatusRef = database.ref('rooms/' + roomId + '/typing');
+                
+                // 设置在线状态
+                const userStatusRef = onlineUsersRef.child(currentUser.id);
+                userStatusRef.set({
+                    name: currentUser.name,
+                    lastActive: firebase.database.ServerValue.TIMESTAMP
+                });
+                
+                // 用户离线时自动移除
+                userStatusRef.onDisconnect().remove();
+                
+                // 隐藏登录界面，显示聊天界面
+                document.getElementById('auth-container').style.display = 'none';
+                document.getElementById('input-container').style.display = 'flex';
+                document.getElementById('online-users').style.display = 'block';
+                document.getElementById('room-info').style.display = 'block';
+                
+                // 设置房间信息
+                document.getElementById('room-info').innerHTML = `<b>房间:</b> ${roomId}`;
+                
+                // 加载消息和监听事件
+                setupListeners();
+                loadMessages();
+            }
+        });
+        
+        // 设置各种监听器
+        function setupListeners() {
+            // 监听在线用户
+            onlineUsersRef.on('value', function(snapshot) {
+                onlineUsers = snapshot.val() || {};
+                updateOnlineUsersList();
+            });
+            
+            // 监听输入框状态
+            const messageInput = document.getElementById('message-input');
+            let typingTimeout = null;
+            
+            messageInput.addEventListener('input', function() {
+                if (messageInput.value.trim()) {
+                    // 设置正在输入状态
+                    typingStatusRef.child(currentUser.id).set({
+                        name: currentUser.name,
+                        timestamp: firebase.database.ServerValue.TIMESTAMP
+                    });
+                    
+                    // 清除之前的超时
+                    if (typingTimeout) clearTimeout(typingTimeout);
+                    
+                    // 2秒后自动清除正在输入状态
+                    typingTimeout = setTimeout(() => {
+                        typingStatusRef.child(currentUser.id).remove();
+                    }, 2000);
+                } else {
+                    // 如果输入框为空，立即移除正在输入状态
+                    typingStatusRef.child(currentUser.id).remove();
+                    if (typingTimeout) clearTimeout(typingTimeout);
+                }
+            });
+            
+            // 监听其他用户的"正在输入"状态
+            typingStatusRef.on('value', function(snapshot) {
+                const typingUsers = snapshot.val() || {};
+                const typingNames = [];
+                
+                // 收集正在输入的用户名
+                Object.keys(typingUsers).forEach(userId => {
+                    if (userId !== currentUser.id) {
+                        typingNames.push(typingUsers[userId].name);
+                    }
+                });
+                
+                // 更新正在输入状态
+                if (typingNames.length > 0) {
+                    typing = true;
+                    typingText = typingNames.join(', ') + " 正在输入...";
+                } else {
+                    typing = false;
+                    typingText = "";
+                }
+            });
+            
+            // 设置发送按钮事件
+            document.getElementById('send-button').addEventListener('click', sendMessage);
+            messageInput.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    sendMessage();
+                }
+            });
+        }
+        
+        // 更新在线用户列表
+        function updateOnlineUsersList() {
+            const container = document.getElementById('online-users');
+            
+            if (Object.keys(onlineUsers).length > 0) {
+                let html = "<b>在线用户:</b><br>";
+                
+                Object.values(onlineUsers).forEach(user => {
+                    const isCurrentUser = user.name === currentUser.name;
+                    html += `${user.name}${isCurrentUser ? ' (你)' : ''}<br>`;
+                });
+                
+                container.innerHTML = html;
+            } else {
+                container.innerHTML = "<b>在线用户:</b><br>只有你在线";
+            }
+        }
+        
+        // 生成简单的用户ID
+        function generateUserId(username) {
+            return username.toLowerCase().replace(/[^a-z0-9]/g, '') + '_' + Date.now().toString(36);
+        }
+        
+        // 加载消息
+        function loadMessages() {
+            // 清空本地消息数组
+            messages = [];
+            
+            // 只获取最近的50条消息
+            messagesRef.orderByChild('timestamp').limitToLast(50)
+                .on('child_added', function(snapshot) {
+                    const msg = snapshot.val();
+                    
+                    // 添加消息到本地数组
+                    messages.push({
+                        text: msg.text,
+                        sender: msg.senderId === currentUser.id ? 'user' : 'other',
+                        timestamp: msg.timestamp,
+                        senderName: msg.senderName
+                    });
+                });
+        }
+        
+        // 发送消息
+        function sendMessage() {
+            const messageInput = document.getElementById('message-input');
+            const message = messageInput.value.trim();
+            
+            if (message && currentUser) {
+                // 创建消息对象
+                const newMessage = {
+                    text: message,
+                    senderId: currentUser.id,
+                    senderName: currentUser.name,
+                    timestamp: Date.now()
+                };
+                
+                // 推送到Firebase
+                messagesRef.push(newMessage);
+                
+                // 清空输入框
+                messageInput.value = '';
+                
+                // 清除正在输入状态
+                typingStatusRef.child(currentUser.id).remove();
+            }
+        }
+        
+        // p5.js 函数 - 初始化
+        function setup() {
+            createCanvas(windowWidth, windowHeight - 70);
+            
+            bubbleWidth = width * 0.7;
+            bubbleHeight = 50;
+            
+            textSize(16);
+            textAlign(LEFT, TOP);
+        }
+        
+        // p5.js 函数 - 绘制
+        function draw() {
+            background(240, 240, 240);
+            displayMessages();
+            
+            // 显示"正在输入"文本
+            if (typing) {
+                fill(150);
+                textSize(14);
+                text(typingText, 20, height - 90);
+            }
+        }
+        
+        // 窗口大小调整
+        function windowResized() {
+            resizeCanvas(windowWidth, windowHeight - 70);
+            bubbleWidth = width * 0.7;
+        }
+        
+        // 显示消息
+        function displayMessages() {
+            // 从底部向上100像素开始显示
+            let y = height - 100;
+            const fontSize = 16;
+            const padding = 12;
+            
+            // 遍历消息数组
+            for (let i = messages.length - 1; i >= 0; i--) {
+                const msg = messages[i];
+                
+                // 设置文本大小用于计算
+                textSize(fontSize);
+                
+                // 计算消息气泡的宽度和高度
+                let msgWidth = min(textWidth(msg.text) + padding * 2, bubbleWidth);
+                msgWidth = max(msgWidth, 60);
+                let msgHeight = calculateTextHeight(msg.text, msgWidth - padding * 2, fontSize) + padding * 2;
+                
+                if (msg.sender === 'user') {
+                    // 用户发送的消息（右侧蓝色气泡）
+                    fill(0, 122, 255);  // iMessage蓝色
+                    rect(width - msgWidth - 20, y - msgHeight, msgWidth, msgHeight, 20);
+                    
+                    fill(255);  // 白色文字
+                    textSize(fontSize);
+                    textAlign(LEFT, TOP);
+                    text(msg.text, width - msgWidth - 20 + padding, y - msgHeight + padding, msgWidth - padding * 2);
+                    
+                    // 显示"我"
+                    fill(150);
+                    textSize(12);
+                    textAlign(RIGHT);
+                    text("我", width - 20, y - msgHeight - 15);
+                } else {
+                    // 他人发送的消息（左侧灰色气泡）
+                    fill(230);  // 灰色气泡
+                    rect(20, y - msgHeight, msgWidth, msgHeight, 20);
+                    
+                    fill(0);  // 黑色文字
+                    textSize(fontSize);
+                    textAlign(LEFT, TOP);
+                    text(msg.text, 20 + padding, y - msgHeight + padding, msgWidth - padding * 2);
+                    
+                    // 显示发送者名称
+                    fill(150);
+                    textSize(12);
+                    textAlign(LEFT);
+                    text(msg.senderName || "其他人", 20, y - msgHeight - 15);
+                }
+                
+                // 更新y坐标，为下一条消息留出空间
+                y -= (msgHeight + 25);
+                
+                // 如果已经超出屏幕顶部，停止绘制
+                if (y < 0) break;
+            }
+        }
+        
+        // 计算多行文本高度
+        function calculateTextHeight(txt, maxWidth, txtSize) {
+            // 设置文本大小
+            textSize(txtSize);
+            
+            // 按字符分割文本
+            const chars = txt.split('');
+            let line = '';
+            let numLines = 1;
+            
+            // 逐个字符检查
+            for (let i = 0; i < chars.length; i++) {
+                const testLine = line + chars[i];
+                const testWidth = textWidth(testLine);
+                
+                // 如果超出最大宽度，开始新行
+                if (testWidth > maxWidth) {
+                    line = chars[i];
+                    numLines++;
+                } else {
+                    line = testLine;
+                }
+            }
+            
+            // 返回行数乘以行高
+            return numLines * (txtSize * 1.2);
+        }
+    </script>
+</body>
+</html>
